@@ -1,7 +1,6 @@
-import { QueryOptions } from 'winston';
-import { DexEvent } from '../../component/chian_event';
+import {QueryOptions} from "@ckb-lumos/base";
 
 
 export interface IndexerSubscribe {
-    subscribe(queryOptions: QueryOptions, event: DexEvent): void;
+    subscribe(queryOptions: QueryOptions): NodeJS.EventEmitter
 }

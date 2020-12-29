@@ -1,17 +1,12 @@
-import { Cell, QueryOptions, TransactionWithStatus, Transaction, Script } from "@ckb-lumos/base";
-import {
-  Indexer,
-  CellCollector,
-  TransactionCollector,
-} from "@ckb-lumos/indexer";
-import { inject, injectable, LazyServiceIdentifer } from "inversify";
-import { indexer_config, contracts } from "../../config";
-import { DexOrderData, CkbUtils } from '../../component';
-import { IndexerService } from './indexer_service';
+import {Cell, QueryOptions, Script, Transaction, TransactionWithStatus} from "@ckb-lumos/base";
+import {CellCollector, Indexer, TransactionCollector,} from "@ckb-lumos/indexer";
+import {inject, injectable, LazyServiceIdentifer} from "inversify";
+import {contracts, indexer_config} from "../../config";
+import {CkbUtils, DexOrderData} from '../../component';
+import {IndexerService} from './indexer_service';
 import CkbService from '../ckb/ckb_service';
-import { modules } from '../../ioc';
-import { IndexerSubscribe } from './indexer_subscribe';
-import { DexEvent } from '../../component/chian_event';
+import {modules} from '../../ioc';
+import {IndexerSubscribe} from './indexer_subscribe';
 
 
 @injectable()
@@ -30,17 +25,13 @@ export default class IndexerWrapper implements IndexerService, IndexerSubscribe 
       console.log("indexer tip block", parseInt(block_number, 16));
     }, 5000);
   }
-
-  subscribe(queryOptions: QueryOptions, event: DexEvent): void {
+  subscribe(queryOptions: QueryOptions): NodeJS.EventEmitter {
     try {
-      const eventEmitter = this.indexer.subscribe({lock: queryOptions.lock});
-      eventEmitter.on("changed", () => {
-        event.sendChange();
-      });
+      //向indexer订阅,当收到changed反馈的时候,发还给DexEvent
+      return this.indexer.subscribe(queryOptions)
     } catch (error) {
       console.error(error)
     }
-
   }
 
   async tip(): Promise<number> {
@@ -48,12 +39,12 @@ export default class IndexerWrapper implements IndexerService, IndexerSubscribe 
     return parseInt(block_number, 16);
   }
 
-  async collectCells(queryOptions: QueryOptions): Promise<Array<Cell>> {  
+  async collectCells(queryOptions: QueryOptions): Promise<Array<Cell>> {
     const cellCollector = new CellCollector(this.indexer, queryOptions);
 
     const cells = [];
     for await (const cell of cellCollector.collect()) cells.push(cell);
-    
+
 
     return cells;
   }
@@ -96,11 +87,11 @@ export default class IndexerWrapper implements IndexerService, IndexerSubscribe 
         const bid_orders: Array<DexOrderData> = [];
         const ask_orders: Array<DexOrderData> = [];
         const { inputs, outputs, outputs_data } = transaction as Transaction;
-        
+
         if(!outputs.find(x => CkbUtils.isOrder(type, x))) {
           continue;
         }
-        
+
         const requests = [];
         for (const input of inputs) {
           requests.push(["getTransaction", input.previous_output.tx_hash]);
@@ -117,7 +108,7 @@ export default class IndexerWrapper implements IndexerService, IndexerSubscribe 
           }
           const orderCell = CkbUtils.parseOrderData(data);
           (orderCell.isBid ? bid_orders : ask_orders).push(orderCell);
-          
+
         }
 
         if (ask_orders.length && bid_orders.length) {

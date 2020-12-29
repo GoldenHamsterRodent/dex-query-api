@@ -1,85 +1,60 @@
-import { Server, Socket } from 'socket.io';
+import {Server, Socket} from 'socket.io';
 import http from "http";
-import { container, modules } from '../ioc';
+import {container, modules} from '../ioc';
 import IndexerWrapper from '../modules/indexer/indexer';
-import { QueryOptions } from 'winston';
-import { Mutex } from 'async-mutex';
+import {QueryOptions} from "@ckb-lumos/base";
+import {IndexerService} from "../modules/indexer/indexer_service";
+import {IndexerSubscribe} from "../modules/indexer/indexer_subscribe";
 
 export class EventContext {
-    private static io: Server;
-  
+    public static socket_io_server: Server;
+    public static indexer_wrapper: IndexerService & IndexerSubscribe;
+
     static init(httpServer: http.Server): void {
-      const io = new Server(httpServer);
-      this.io = io;
-      EventContext.connection();
+      EventContext.socket_io_server = new Server(httpServer);
+      EventContext.indexer_wrapper = container.get(modules[IndexerWrapper.name]);
+      EventContext.socket_io_server.on('connection',EventContext.connection)
     }
-  
-    static connection(): void {
-      const indexer: IndexerWrapper = container.get(modules[IndexerWrapper.name]);
-      this.io.on('connection', function(socket: Socket) {
-        socket.on('dex-event', function(msg) {
-          try {      
-            const event = new CkbBalanceEvent(indexer, JSON.parse(msg), socket)
-            event.subscribe();
-          } catch (error) {
-            console.error(error);
-          }
-  
-        });  
-      });
-  
-    }
-  
-}
+    static connection(socket: Socket): void {
 
-export interface DexEvent {
-    subscribe(): Promise<void>;
-    sendChange(): void;
-}
+      let last_block = 0;
+      let indexer_emitter = null;
+      socket.on('dex-event', async (queryOptions_jsonstr) => {
+        try {
+          const queryOptions : QueryOptions = JSON.parse(queryOptions_jsonstr);
+          indexer_emitter = EventContext.indexer_wrapper.subscribe(queryOptions)
 
 
-export class CkbBalanceEvent implements DexEvent {
-    private indexer: IndexerWrapper; 
-    private eventKey: QueryOptions;
-    private socket: Socket;
-    private blockNumber = 0;
-    private mutex = new Mutex();
-  
-    constructor(
-      indexer: IndexerWrapper,
-      eventKey: QueryOptions,
-      socket: Socket,
-    ) {
-      this.indexer = indexer;
-      this.eventKey = eventKey;
-      this.socket = socket;
-      this.indexer.tip().then(res => {
-        this.blockNumber = res;
-      });
-      
-    }
+          indexer_emitter.on('error', (error) => {
+            indexer_emitter.removeAllListeners()
+            socket.disconnect(true)
+          })
 
+          indexer_emitter.on('changed', async () => {
+            console.log('changed')
+            const block = await EventContext.indexer_wrapper.tip();
+            if(last_block === block) {
+              return
+            }else{
+              last_block = block
+            }
+            socket.emit("order-change", last_block)
+          })
 
-
-    async sendChange(): Promise<void> {
-      // link https://github.com/DirtyHairy/async-mutex
-      const release = await this.mutex.acquire();
-      try {
-        const blockNumber = await this.indexer.tip();
-        if(this.blockNumber === blockNumber) {
-          return;
+        } catch (error) {
+          console.error(error);
         }
+      });
 
-        this.blockNumber = blockNumber;
-        
-        this.socket.emit("order-change", blockNumber);  
-      } finally {
-        release();
-      }
+      socket.on('disconnect',(reason) => {
+        //unsubscribe to indexer
+        if(indexer_emitter === null){
+          return
+        }
+        indexer_emitter.removeAllListeners('changed')
+        indexer_emitter.removeAllListeners('error')
+        console.log(`client disconnect for: >${reason}<`)
+      })
     }
 
-    async subscribe(): Promise<void> {
-      this.indexer.subscribe(this.eventKey, this);
-    }
-  
 }
